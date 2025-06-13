@@ -26,16 +26,9 @@ type Customer struct {
 var db *sql.DB
 
 // initDB initializes the database connection.
-// It prioritizes an environment variable for the connection string,
-// which is essential for Docker and production.
-// It falls back to a local default for easy `go run` development.
 func initDB() {
-	// Get the connection string from an environment variable
 	connStr := os.Getenv("CRM_DB_CONNECTION_STRING")
-
-	// If the environment variable is not set, use a default for local development
 	if connStr == "" {
-		// IMPORTANT: Replace 'karimabdelaziz' with your actual Mac username
 		connStr = "postgres://karimabdelaziz@localhost/crm?sslmode=disable"
 		log.Println("Warning: CRM_DB_CONNECTION_STRING not set. Using fallback for local development.")
 	}
@@ -46,7 +39,6 @@ func initDB() {
 		log.Fatal("Failed to open database connection:", err)
 	}
 
-	// Ping the database to verify the connection is alive.
 	err = db.Ping()
 	if err != nil {
 		log.Fatal("Failed to ping database:", err)
@@ -146,9 +138,50 @@ func updateCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.ID, _ = strconv.Atoi(id) // Set ID for response
+	c.ID, _ = strconv.Atoi(id)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(c)
+}
+
+// updateCustomersBatch handles PUT requests to /customers/batch for bulk updates
+func updateCustomersBatch(w http.ResponseWriter, r *http.Request) {
+	var updates []Customer
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Failed to start transaction: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updatedCount := 0
+	for _, u := range updates {
+		res, err := tx.Exec("UPDATE customers SET name=$1, role=$2, email=$3, phone=$4, contacted=$5 WHERE id=$6",
+			u.Name, u.Role, u.Email, u.Phone, u.Contacted, u.ID)
+		if err != nil {
+			tx.Rollback()
+			http.Error(w, "Failed to update customer: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rowsAffected, _ := res.RowsAffected()
+		if rowsAffected > 0 {
+			updatedCount++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"result":            "Batch update completed",
+		"customers_updated": updatedCount,
+	})
 }
 
 // deleteCustomer deletes a customer
@@ -193,16 +226,16 @@ func main() {
 
 	router.HandleFunc("/", homePage).Methods("GET")
 	router.HandleFunc("/customers", getCustomers).Methods("GET")
-	router.HandleFunc("/customers/{id}", getCustomer).Methods("GET")
 	router.HandleFunc("/customers", addCustomer).Methods("POST")
+	// IMPORTANT: More specific routes must be registered before general ones.
+	router.HandleFunc("/customers/batch", updateCustomersBatch).Methods("PUT")
+	router.HandleFunc("/customers/{id}", getCustomer).Methods("GET")
 	router.HandleFunc("/customers/{id}", updateCustomer).Methods("PUT")
 	router.HandleFunc("/customers/{id}", deleteCustomer).Methods("DELETE")
 
-	// This is the production-ready code for starting the server.
-	// It reads the PORT from the environment, which is required by Heroku.
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // Default port if not specified
+		port = "8080"
 	}
 
 	log.Println("Server starting on port", port)
