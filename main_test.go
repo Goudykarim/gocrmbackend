@@ -3,11 +3,29 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
 )
+
+// TestMain runs before all other tests in the package.
+// It's the perfect place to set up and tear down resources like a database connection.
+func TestMain(m *testing.M) {
+	// Call the initDB function from main.go to set up the database connection.
+	initDB()
+
+	// Exit code from the test run
+	var code int
+	// Use a defer function to ensure the database connection is closed after the tests run.
+	defer func() {
+		db.Close()
+		os.Exit(code)
+	}()
+	// Run all the tests and store the exit code.
+	code = m.Run()
+}
 
 // TestGetCustomersHandler tests the happy path of submitting a well-formed GET /customers request
 func TestGetCustomersHandler(t *testing.T) {
@@ -36,11 +54,11 @@ func TestAddCustomerHandler(t *testing.T) {
 	// The request body includes a valid JSON payload
 	requestBody := strings.NewReader(`
 		{
-			"name": "Test User",
+			"name": "Test User From Test",
 			"role": "Tester",
-			"email": "test@example.com",
-			"phone": "1234567890",
-			"contacted": true
+			"email": "test-user@example.com",
+			"phone": "9876543210",
+			"contacted": false
 		}
 	`)
 
@@ -50,7 +68,6 @@ func TestAddCustomerHandler(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	// The handler for adding a customer is tested directly
 	handler := http.HandlerFunc(addCustomer)
 	handler.ServeHTTP(rr, req)
 
